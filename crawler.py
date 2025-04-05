@@ -14,9 +14,9 @@ def search_product_rank(driver, keyword, target_product_id):
     url = "https://search.shopping.naver.com/ns/search?query=" + keyword
     print(f"[정보] 이동: {url}")
     driver.get(url)
-    time.sleep(2)
+    time.sleep(3)  # 초기 페이지 로딩 대기 시간 증가
 
-    SCROLL_CYCLES = 30
+    SCROLL_CYCLES = 50  # 스크롤 시도 횟수 증가
     last_height = 0
 
     # (2) 새로운 변수들
@@ -27,19 +27,26 @@ def search_product_rank(driver, keyword, target_product_id):
     # (3) '새로운 li' 엘리먼트가 있는지 없는지 판별을 위해 사용
     processed_items = set()  
     no_new_items_count = 0
+    consecutive_same_height_count = 0  # 페이지 높이가 연속으로 같은 횟수
 
     for cycle in range(1, SCROLL_CYCLES + 1):
         print(f"\n--- [정보] 스크롤 사이클 {cycle} ---")
 
-        # 스크롤 여러 번 수행
-        for step in range(10):  
-            driver.execute_script("window.scrollBy(0, 2000);")
-            time.sleep(0.3)
+        # 스크롤 로직 개선
+        for step in range(5):  # 한번에 너무 많이 스크롤하지 않도록 수정
+            driver.execute_script("window.scrollBy(0, 1000);")  # 스크롤 거리 감소
+            time.sleep(0.5)  # 개별 스크롤 대기 시간 증가
         
-        time.sleep(1)
+        time.sleep(2)  # 전체 스크롤 후 대기 시간 증가
 
         # 현재 페이지 높이 확인
         current_height = driver.execute_script("return document.documentElement.scrollHeight")
+        
+        # 페이지 높이가 이전과 같은지 확인
+        if current_height == last_height:
+            consecutive_same_height_count += 1
+        else:
+            consecutive_same_height_count = 0
 
         # (4) li 태그 중에서 class가 "compositeCardContainer_composite_card_container" 를 포함하고
         #     "composite_card_container"도 포함하는 애들만 가져옵니다
@@ -118,8 +125,8 @@ def search_product_rank(driver, keyword, target_product_id):
                         print(f"[정보] ★ 목표 상품({target_product_id}) 발견! ★")
                         print(f"     └ list_count={list_count}, ad_count={ad_count}, prod_count={prod_count}, rank={real_rank}")
 
-                        # (5-4) 타겟을 찾은 시점의 지표들을 튜플로 리턴
-                        return (list_count, ad_count, prod_count, real_rank)
+                        # 순위만 반환하도록 수정
+                        return real_rank
                     else:
                         print(f"{list_count} : {prod_id}, 제품, 찾던건 아님")
 
@@ -140,9 +147,9 @@ def search_product_rank(driver, keyword, target_product_id):
         else:
             no_new_items_count = 0
 
-        # 연속 3번 이상 새로운 li가 없고, 페이지 높이가 변하지 않으면 스크롤 중단
-        if no_new_items_count >= 3 and current_height == last_height:
-            print("[정보] 연속 3번 이상 새로운 상품이 없음 -> 스크롤 중단")
+        # 스크롤 중단 조건 수정
+        if no_new_items_count >= 5 and consecutive_same_height_count >= 3:
+            print("[정보] 연속 5번 이상 새로운 상품이 없고, 3번 연속 높이가 같음 -> 스크롤 중단")
             break
 
         last_height = current_height
@@ -151,20 +158,24 @@ def search_product_rank(driver, keyword, target_product_id):
     return None
 
 
-# (8) CSV 저장 함수에서 list_count, ad_count, prod_count, prod_rank 등을 같이 저장하도록 수정합니다.
-def save_to_csv(product_id, keyword, list_count, ad_count, prod_count, prod_rank):
-    filename = f"{product_id}.csv"
+# (8) CSV 저장 함수를 수정하여 순위만 저장하도록 합니다.
+def save_to_csv(product_id, keyword, rank):
+    # results 폴더가 없으면 생성
+    results_dir = "results"
+    if not os.path.exists(results_dir):
+        os.makedirs(results_dir)
+    
+    filename = os.path.join(results_dir, f"{product_id}.csv")
     today = datetime.now().strftime("%y-%m-%d")
 
     file_exists = os.path.isfile(filename)
 
-    with open(filename, 'a', newline='', encoding='utf-8') as f:
+    with open(filename, 'a', newline='', encoding='utf-8-sig') as f:  # utf-8-sig로 변경하여 Excel에서 한글 깨짐 방지
         writer = csv.writer(f)
         # 파일이 없으면 헤더 추가
         if not file_exists:
-            writer.writerow(['날짜', '키워드', 'list_count', 'ad_count', 'prod_count', 'prod_rank'])
-
-        writer.writerow([today, keyword, list_count, ad_count, prod_count, prod_rank])
+            writer.writerow(['날짜', '키워드', '순위'])
+        writer.writerow([today, keyword, rank])
 
 
 def main():
@@ -181,17 +192,14 @@ def main():
             print(f"\n=== 제품 ID: {product_id} 검색 시작 ===")
             for keyword in keywords:
                 print(f"\n키워드 '{keyword}' 검색 중...")
-                result = search_product_rank(driver, keyword, product_id)
+                rank = search_product_rank(driver, keyword, product_id)
 
-                if result:
-                    # result는 (list_count, ad_count, prod_count, prod_rank) 형태
-                    list_count, ad_count, prod_count, found_rank = result
-                    print(f"순위: {found_rank}")
-                    save_to_csv(product_id, keyword, list_count, ad_count, prod_count, found_rank)
+                if rank:
+                    print(f"순위: {rank}")
+                    save_to_csv(product_id, keyword, rank)
                 else:
-                    # 상품을 못 찾았을 경우 list_count 등은 의미가 없으니 "N/A"로 처리
                     print("상품을 찾지 못했습니다.")
-                    save_to_csv(product_id, keyword, "N/A", "N/A", "N/A", "N/A")
+                    save_to_csv(product_id, keyword, "N/A")
 
                 time.sleep(2)  # 다음 검색 전 대기
 
